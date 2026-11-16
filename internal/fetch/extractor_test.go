@@ -63,3 +63,20 @@ func TestDetectSPAShell(t *testing.T) {
 		t.Errorf("expected SPA shell detection to return true")
 	}
 }
+
+func TestExtractSectionFilter(t *testing.T) {
+	md := "# Title\n\nIntro text.\n\n## Installation\n\nRun `go install`.\n\n### Linux\n\nUse apt.\n\n## Usage\n\nRun the binary.\n"
+
+	got := ExtractSection(md, "installation")
+	if !strings.Contains(got, "## Installation") || !strings.Contains(got, "### Linux") {
+		t.Fatalf("expected Installation section and its subsection, got:\n%s", got)
+	}
+	if strings.Contains(got, "## Usage") || strings.Contains(got, "Intro text.") {
+		t.Fatalf("expected unrelated sections to be excluded, got:\n%s", got)
+	}
+
+	fallback := ExtractSection(md, "nonexistent-section")
+	if fallback != md {
+		t.Fatalf("expected full markdown fallback when section does not match")
+	}
+}

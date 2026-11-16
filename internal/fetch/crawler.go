@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/local-web-eyes/local-web-eyes/internal/config"
 )
@@ -98,58 +99,97 @@ func (c *Crawler) Crawl(ctx context.Context, rootURL string, opts CrawlOptions) 
 		perPageCap = 1000
 	}
 
+	type crawlFetchOutcome struct {
+		item crawlQueueItem
+		res  FetchResult
+		err  error
+	}
+
 	for len(queue) > 0 && len(result.Pages) < pageCap && remainingChars > 200 {
 		if ctx.Err() != nil {
 			result.StoppedReason = "context_cancelled"
 			break
 		}
-		item := queue[0]
-		queue = queue[1:]
-
-		maxForPage := perPageCap
-		if maxForPage > remainingChars {
-			maxForPage = remainingChars
+		batchSize := pageCap - len(result.Pages)
+		if batchSize > 3 {
+			batchSize = 3
 		}
-
-		pageRes, fetchErr := c.fetcher.Fetch(ctx, item.url, FetchOptions{
-			MaxChars: maxForPage,
-			RenderJS: "auto",
-		})
-		if fetchErr != nil {
-			continue
+		if batchSize > len(queue) {
+			batchSize = len(queue)
 		}
+		batch := queue[:batchSize]
+		queue = queue[batchSize:]
 
-		result.Pages = append(result.Pages, CrawledPage{
-			URL:        pageRes.URL,
-			Title:      pageRes.Title,
-			Content:    pageRes.Content,
-			Headings:   pageRes.Headings,
-			SourceMode: pageRes.SourceMode,
-			Truncated:  pageRes.Truncated,
-		})
-		result.TotalChars += pageRes.ReturnedChars
-		remainingChars -= pageRes.ReturnedChars
-
-		if item.depth >= depthCap {
-			continue
+		batchResults := make([]crawlFetchOutcome, batchSize)
+		var wg sync.WaitGroup
+		for i, item := range batch {
+			wg.Add(1)
+			go func(idx int, it crawlQueueItem) {
+				defer wg.Done()
+				maxForPage := perPageCap
+				if maxForPage > remainingChars {
+					maxForPage = remainingChars
+				}
+				pageRes, fetchErr := c.fetcher.Fetch(ctx, it.url, FetchOptions{
+					MaxChars: maxForPage,
+					RenderJS: "auto",
+				})
+				batchResults[idx] = crawlFetchOutcome{
+					item: it,
+					res:  pageRes,
+					err:  fetchErr,
+				}
+			}(i, item)
 		}
-		for _, link := range pageRes.Links {
-			lu, parseErr := c.fetcher.guard.ValidateURL(link)
-			if parseErr != nil {
+		wg.Wait()
+
+		for _, out := range batchResults {
+			if out.err != nil {
 				continue
 			}
-			if strings.ToLower(lu.Scheme) != rootScheme || strings.ToLower(lu.Hostname()) != rootHost {
+			if len(result.Pages) >= pageCap || remainingChars <= 200 {
+				break
+			}
+			content := out.res.Content
+			returned := out.res.ReturnedChars
+			truncated := out.res.Truncated
+			if returned > remainingChars {
+				content, _, _ = PaginateMarkdown(content, 0, remainingChars)
+				returned = len(content)
+				truncated = true
+			}
+			result.Pages = append(result.Pages, CrawledPage{
+				URL:        out.res.URL,
+				Title:      out.res.Title,
+				Content:    content,
+				Headings:   out.res.Headings,
+				SourceMode: out.res.SourceMode,
+				Truncated:  truncated,
+			})
+			result.TotalChars += returned
+			remainingChars -= returned
+
+			if out.item.depth >= depthCap {
 				continue
 			}
-			if hasDangerousExtension(lu) {
-				continue
+			for _, link := range out.res.Links {
+				lu, parseErr := c.fetcher.guard.ValidateURL(link)
+				if parseErr != nil {
+					continue
+				}
+				if strings.ToLower(lu.Scheme) != rootScheme || strings.ToLower(lu.Hostname()) != rootHost {
+					continue
+				}
+				if hasDangerousExtension(lu) {
+					continue
+				}
+				key := normalizeCrawlURL(lu)
+				if visited[key] {
+					continue
+				}
+				visited[key] = true
+				queue = append(queue, crawlQueueItem{url: lu.String(), depth: out.item.depth + 1})
 			}
-			key := normalizeCrawlURL(lu)
-			if visited[key] {
-				continue
-			}
-			visited[key] = true
-			queue = append(queue, crawlQueueItem{url: lu.String(), depth: item.depth + 1})
 		}
 	}
 

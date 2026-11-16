@@ -49,3 +49,32 @@ func TestBlocklistAllowlistOverride(t *testing.T) {
 		t.Fatalf("expected custom denylist domain to be blocked")
 	}
 }
+
+func TestBlocklistSnapshotRoundTrip(t *testing.T) {
+	src := NewBlocklist(nil, nil)
+	src.LoadLines([]string{
+		"||evil-phish.example^",
+		"0.0.0.0 malware-c2.example",
+		"https://bad-site.org/login/steal",
+	})
+
+	snap := src.ExportSnapshot()
+	if snap == "" {
+		t.Fatal("expected non-empty snapshot")
+	}
+
+	dst := NewBlocklist(nil, nil)
+	domains, urls := dst.ImportSnapshot(snap)
+	if domains != 2 || urls != 1 {
+		t.Fatalf("expected 2 domains and 1 url imported, got domains=%d urls=%d", domains, urls)
+	}
+	if _, hit := dst.MatchURL("https://sub.evil-phish.example/a"); !hit {
+		t.Errorf("expected imported snapshot to block subdomain of evil-phish.example")
+	}
+	if _, hit := dst.MatchURL("http://malware-c2.example/"); !hit {
+		t.Errorf("expected imported snapshot to block malware-c2.example")
+	}
+	if _, hit := dst.MatchURL("https://bad-site.org/login/steal?x=1"); !hit {
+		t.Errorf("expected imported snapshot to block bad-site.org URL")
+	}
+}

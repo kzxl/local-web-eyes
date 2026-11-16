@@ -28,21 +28,18 @@ type ExtractedDoc struct {
 	NeedsRender bool              `json:"-"`
 }
 
-// ExtractHTML sanitizes raw HTML, strips boilerplate via go-trafilatura, and converts to Markdown.
+// ExtractHTML sanitizes raw HTML DOM in-place, strips boilerplate via go-trafilatura, and converts to Markdown.
 func ExtractHTML(rawHTML, rawURL string, minChars int) (ExtractedDoc, error) {
 	if minChars <= 0 {
 		minChars = 200
 	}
-	sanitized, err := security.SanitizeHTML(rawHTML)
-	if err != nil {
-		return ExtractedDoc{}, err
-	}
 
 	parsedURL, _ := url.Parse(rawURL)
-	docNode, err := html.Parse(strings.NewReader(sanitized))
+	docNode, err := html.Parse(strings.NewReader(rawHTML))
 	if err != nil {
 		return ExtractedDoc{}, err
 	}
+	security.SanitizeNode(docNode)
 
 	pageTitle := extractHTMLTitle(docNode)
 	links := extractLinks(docNode, parsedURL)
@@ -73,23 +70,16 @@ func ExtractHTML(rawHTML, rawURL string, minChars int) (ExtractedDoc, error) {
 		}
 
 		if res.ContentNode != nil {
-			var buf bytes.Buffer
-			if renderErr := html.Render(&buf, res.ContentNode); renderErr == nil {
-				if conv, convErr := htmltomarkdown.ConvertString(buf.String()); convErr == nil {
-					mdOut = conv
-				}
-			}
+			mdOut = renderNodeToMarkdown(res.ContentNode)
 		}
 		if strings.TrimSpace(mdOut) == "" {
 			mdOut = res.ContentText
 		}
 	}
 
-	// Fallback: convert sanitized HTML directly if trafilatura produced nothing.
+	// Fallback: convert sanitized DOM directly if trafilatura produced nothing.
 	if strings.TrimSpace(mdOut) == "" {
-		if conv, convErr := htmltomarkdown.ConvertString(sanitized); convErr == nil {
-			mdOut = conv
-		}
+		mdOut = renderNodeToMarkdown(docNode)
 	}
 
 	mdOut = security.CleanText(mdOut)
@@ -179,6 +169,81 @@ func PaginateMarkdown(text string, offset, maxChars int) (chunk string, nextOffs
 		nextOffset = 0
 	}
 	return chunk, nextOffset, nextOffset > 0
+}
+
+// ExtractSection returns the Markdown slice under the first heading matching section (case-insensitive),
+// spanning until the next heading of the same or higher level. Returns markdown unchanged if no heading matches.
+func ExtractSection(markdown, section string) string {
+	target := strings.ToLower(strings.TrimSpace(section))
+	if target == "" || markdown == "" {
+		return markdown
+	}
+	lines := strings.Split(markdown, "\n")
+	inFence := false
+	startIdx := -1
+	targetLevel := 0
+	endIdx := len(lines)
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		level, title, ok := parseHeadingLine(trimmed)
+		if !ok {
+			continue
+		}
+		if startIdx < 0 {
+			if strings.Contains(strings.ToLower(title), target) {
+				startIdx = i
+				targetLevel = level
+			}
+		} else if level <= targetLevel {
+			endIdx = i
+			break
+		}
+	}
+	if startIdx < 0 {
+		return markdown
+	}
+	return strings.TrimSpace(strings.Join(lines[startIdx:endIdx], "\n"))
+}
+
+func parseHeadingLine(trimmed string) (int, string, bool) {
+	if !strings.HasPrefix(trimmed, "#") {
+		return 0, "", false
+	}
+	level := 0
+	for level < len(trimmed) && trimmed[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 || level >= len(trimmed) {
+		return 0, "", false
+	}
+	if trimmed[level] != ' ' && trimmed[level] != '\t' {
+		return 0, "", false
+	}
+	title := strings.TrimSpace(trimmed[level+1:])
+	return level, title, title != ""
+}
+
+func renderNodeToMarkdown(n *html.Node) string {
+	if n == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := html.Render(&buf, n); err != nil {
+		return ""
+	}
+	conv, err := htmltomarkdown.ConvertString(buf.String())
+	if err != nil {
+		return ""
+	}
+	return conv
 }
 
 func extractMarkdownHeadings(md string, maxHeadings int) []string {

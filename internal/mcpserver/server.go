@@ -33,6 +33,7 @@ type WebFetchInput struct {
 	MaxChars int    `json:"max_chars,omitempty" jsonschema:"Maximum Markdown characters to return per call (default 6000)"`
 	Offset   int    `json:"offset,omitempty" jsonschema:"Byte offset to resume reading a truncated page"`
 	RenderJS string `json:"render_js,omitempty" jsonschema:"Browser JS rendering mode: auto (default), always, or never"`
+	Section  string `json:"section,omitempty" jsonschema:"Optional heading name/keyword to extract only that matching Markdown section"`
 }
 
 // WebCrawlInput defines arguments for the web_crawl tool.
@@ -86,6 +87,7 @@ func NewServer(deps Deps) *mcp.Server {
 			MaxChars: in.MaxChars,
 			Offset:   in.Offset,
 			RenderJS: in.RenderJS,
+			Section:  in.Section,
 		})
 		return nil, res, err
 	})

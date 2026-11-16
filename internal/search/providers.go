@@ -144,9 +144,10 @@ func (p *WikipediaProvider) Search(ctx context.Context, query string, limit int,
 		}
 	}
 
+	lang := detectWikipediaLang(query)
 	capLimit := minInt(limit, 5)
-	endpoint := fmt.Sprintf("https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=%d&srsearch=%s",
-		capLimit, url.QueryEscape(query))
+	endpoint := fmt.Sprintf("https://%s.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=%d&srsearch=%s",
+		lang, capLimit, url.QueryEscape(query))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -191,13 +192,22 @@ func (p *WikipediaProvider) Search(ctx context.Context, query string, limit int,
 		snippet := html.UnescapeString(htmlTagRe.ReplaceAllString(s.Snippet, ""))
 		out = append(out, Result{
 			Title:         s.Title + " - Wikipedia",
-			URL:           "https://en.wikipedia.org/wiki/" + url.PathEscape(slug),
+			URL:           fmt.Sprintf("https://%s.wikipedia.org/wiki/%s", lang, url.PathEscape(slug)),
 			Snippet:       snippet,
 			SourceEngines: []string{"wikipedia"},
 			Metadata:      map[string]string{"updated": s.Timestamp},
 		})
 	}
 	return out, nil
+}
+
+func detectWikipediaLang(query string) string {
+	for _, r := range query {
+		if (r >= 0x1EA0 && r <= 0x1EF9) || strings.ContainsRune("ăâđêôơưĂÂĐÊÔƠƯ", r) {
+			return "vi"
+		}
+	}
+	return "en"
 }
 
 // DuckDuckGoProvider scrapes DuckDuckGo HTML results and detects 202/CAPTCHA throttling (Tier 2).

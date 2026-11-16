@@ -175,8 +175,9 @@ func (r *Router) Search(ctx context.Context, query string, limit int, timeRange 
 		return tier <= 2
 	})
 
-	// Escalate to Tier 3 (browser-backed search) only if primary tiers returned zero safe hits.
-	if len(primaryResults) == 0 {
+	// Escalate to Tier 3 (browser-backed search) if primary tiers returned zero safe hits,
+	// or if only Wikipedia returned hits while general primary web engines yielded nothing.
+	if r.needsTier3Fallback(primaryResults) {
 		t3Results, t3Used, t3Filtered := r.runTierGroup(ctx, cleanQuery, limit, normRange, func(tier int) bool {
 			return tier >= 3
 		})
@@ -355,6 +356,30 @@ func (r *Router) runTierGroup(ctx context.Context, query string, limit int, time
 	return allHits, used, totalFiltered
 }
 
+func (r *Router) needsTier3Fallback(hits []rankedHit) bool {
+	if len(hits) == 0 {
+		return true
+	}
+	hasGeneralPrimary := false
+	for _, mp := range r.providers {
+		if mp.provider.Tier() <= 2 && mp.provider.Name() != "wikipedia" {
+			hasGeneralPrimary = true
+			break
+		}
+	}
+	if !hasGeneralPrimary {
+		return false
+	}
+	for _, h := range hits {
+		for _, eng := range h.result.SourceEngines {
+			if eng != "wikipedia" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func fuseAndDedupe(hits []rankedHit) []Result {
 	const rrfK = 60.0
 	type agg struct {
@@ -368,7 +393,10 @@ func fuseAndDedupe(hits []rankedHit) []Result {
 		if key == "" {
 			continue
 		}
-		score := 1.0 / (rrfK + float64(h.rank+1))
+		score := h.result.Score
+		if score <= 0 {
+			score = 1.0 / (rrfK + float64(h.rank+1))
+		}
 		entry, exists := byURL[key]
 		if !exists {
 			engMap := make(map[string]struct{})

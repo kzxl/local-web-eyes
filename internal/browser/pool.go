@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,8 +24,9 @@ var ErrBrowserDisabled = errors.New("headless browser is disabled or unavailable
 // Pool manages a lazy, isolated Chromium/Edge instance over CDP with strict
 // SSRF request hijacking and zero file downloads.
 type Pool struct {
-	cfg   config.BrowserConfig
-	guard *security.Guard
+	cfg        config.BrowserConfig
+	guard      *security.Guard
+	httpClient *http.Client
 
 	mu      sync.Mutex
 	browser *rod.Browser
@@ -40,10 +42,19 @@ func NewPool(cfg config.BrowserConfig, guard *security.Guard) *Pool {
 	if maxConc <= 0 {
 		maxConc = 2
 	}
+	timeout := cfg.PageTimeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	var httpClient *http.Client
+	if guard != nil {
+		httpClient = guard.NewHTTPClient(timeout)
+	}
 	return &Pool{
-		cfg:   cfg,
-		guard: guard,
-		sem:   make(chan struct{}, maxConc),
+		cfg:        cfg,
+		guard:      guard,
+		httpClient: httpClient,
+		sem:        make(chan struct{}, maxConc),
 	}
 }
 
@@ -91,7 +102,15 @@ func (p *Pool) RenderHTMLWithWait(ctx context.Context, targetURL, waitSelector s
 	// Create an isolated incognito context per navigation so cookies/storage never persist.
 	incog, err := b.Incognito()
 	if err != nil {
-		return "", fmt.Errorf("create incognito context: %w", err)
+		p.resetBrowser(b)
+		b, err = p.ensureBrowser()
+		if err != nil {
+			return "", err
+		}
+		incog, err = b.Incognito()
+		if err != nil {
+			return "", fmt.Errorf("create incognito context: %w", err)
+		}
 	}
 	defer func() { _ = incog.Close() }()
 
@@ -123,7 +142,19 @@ func (p *Pool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
+	return p.cleanupLocked()
+}
 
+func (p *Pool) resetBrowser(failed *rod.Browser) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.browser != failed {
+		return
+	}
+	_ = p.cleanupLocked()
+}
+
+func (p *Pool) cleanupLocked() error {
 	if p.router != nil {
 		_ = p.router.Stop()
 		p.router = nil
@@ -224,14 +255,29 @@ func (p *Pool) handleHijack(h *rod.Hijack) {
 		}
 	}
 
-	if _, err := p.guard.ValidateURL(reqURL.String()); err != nil {
-		h.Response.Fail(proto.NetworkErrorReasonAccessDenied)
-		return
+	if p.guard != nil {
+		if _, err := p.guard.ValidateURL(reqURL.String()); err != nil {
+			h.Response.Fail(proto.NetworkErrorReasonAccessDenied)
+			return
+		}
+		checkCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if _, err := p.guard.CheckHostIPs(checkCtx, reqURL.Hostname()); err != nil {
+			h.Response.Fail(proto.NetworkErrorReasonAccessDenied)
+			return
+		}
 	}
-	checkCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if _, err := p.guard.CheckHostIPs(checkCtx, reqURL.Hostname()); err != nil {
-		h.Response.Fail(proto.NetworkErrorReasonAccessDenied)
+
+	if p.httpClient != nil {
+		h.Request.Req().Header.Del("Accept-Encoding")
+		if err := h.LoadResponse(p.httpClient, true); err != nil {
+			if errors.Is(err, security.ErrSSRFBlocked) || errors.Is(err, security.ErrBlocklistMatch) {
+				h.Response.Fail(proto.NetworkErrorReasonAccessDenied)
+			} else {
+				h.Response.Fail(proto.NetworkErrorReasonFailed)
+			}
+			return
+		}
 		return
 	}
 

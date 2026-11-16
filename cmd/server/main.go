@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -66,7 +67,9 @@ func main() {
 	})
 
 	if cfg.Security.BlocklistEnabled && len(cfg.Security.BlocklistFeeds) > 0 {
-		go runBlocklistSyncLoop(ctx, logger, bl, guard, cfg.Security.BlocklistFeeds, cfg.Security.BlocklistRefreshInterval)
+		go runBlocklistSyncLoop(ctx, logger, bl, guard, store, cfg.Security.BlocklistFeeds, cfg.Security.BlocklistRefreshInterval)
+	} else if store != nil {
+		_ = store.PurgeExpired(ctx)
 	}
 
 	pool := browser.NewPool(cfg.Browser, guard)
@@ -140,12 +143,38 @@ func runHTTPServer(ctx context.Context, logger *slog.Logger, srv *mcp.Server, de
 	return err
 }
 
-func runBlocklistSyncLoop(ctx context.Context, logger *slog.Logger, bl *security.Blocklist, guard *security.Guard, feeds []string, interval time.Duration) {
+func runBlocklistSyncLoop(ctx context.Context, logger *slog.Logger, bl *security.Blocklist, guard *security.Guard, store *cache.Store, feeds []string, interval time.Duration) {
+	if interval <= 0 {
+		interval = 12 * time.Hour
+	}
+
+	skipInitialSync := false
+	if store != nil {
+		_ = store.PurgeExpired(ctx)
+		if snap, ok, err := store.GetMeta(ctx, "blocklist_snapshot_v1"); err == nil && ok && snap != "" {
+			domains, urls := bl.ImportSnapshot(snap)
+			logger.Info("loaded cached blocklist snapshot", "domains", domains, "urls", urls)
+			if domains > 0 || urls > 0 {
+				if rawTS, tsOK, tsErr := store.GetMeta(ctx, "blocklist_synced_at"); tsErr == nil && tsOK {
+					if unixSec, parseErr := strconv.ParseInt(rawTS, 10, 64); parseErr == nil {
+						if time.Since(time.Unix(unixSec, 0)) < interval {
+							skipInitialSync = true
+						}
+					}
+				}
+			}
+		}
+	}
+
 	syncClient := guard.NewHTTPClient(25 * time.Second)
 	syncOnce := func() {
 		syncCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
 		domains, urls, err := bl.SyncFromFeeds(syncCtx, syncClient, feeds)
+		if (domains > 0 || urls > 0) && store != nil {
+			_ = store.PutMeta(ctx, "blocklist_snapshot_v1", bl.ExportSnapshot())
+			_ = store.PutMeta(ctx, "blocklist_synced_at", strconv.FormatInt(time.Now().Unix(), 10))
+		}
 		if err != nil {
 			logger.Warn("blocklist feed sync completed with warnings", "domains", domains, "urls", urls, "err", err)
 			return
@@ -153,9 +182,8 @@ func runBlocklistSyncLoop(ctx context.Context, logger *slog.Logger, bl *security
 		logger.Info("blocklist feeds synced", "domains", domains, "urls", urls)
 	}
 
-	syncOnce()
-	if interval <= 0 {
-		interval = 12 * time.Hour
+	if !skipInitialSync {
+		syncOnce()
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -164,6 +192,9 @@ func runBlocklistSyncLoop(ctx context.Context, logger *slog.Logger, bl *security
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if store != nil {
+				_ = store.PurgeExpired(ctx)
+			}
 			syncOnce()
 		}
 	}

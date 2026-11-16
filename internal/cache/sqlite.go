@@ -160,6 +160,8 @@ func (s *Store) GetPage(ctx context.Context, pageURL string) (CachedPage, bool, 
 		return CachedPage{}, false, err
 	}
 	if expiresAt <= now {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM page_cache WHERE url = ?`, pageURL)
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM page_fts WHERE url = ?`, pageURL)
 		return CachedPage{}, false, nil
 	}
 	return p, true, nil
@@ -237,13 +239,38 @@ func (s *Store) SearchLocalPages(ctx context.Context, query string, limit int) (
 	return out, rows.Err()
 }
 
-// PurgeExpired removes expired search and page cache entries.
+// PurgeExpired removes expired search and page cache entries along with orphaned FTS5 rows.
 func (s *Store) PurgeExpired(ctx context.Context) error {
 	now := time.Now().Unix()
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM search_cache WHERE expires_at <= ?`, now); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM page_cache WHERE expires_at <= ?`, now)
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM page_cache WHERE expires_at <= ?`, now); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM page_fts WHERE url NOT IN (SELECT url FROM page_cache)`)
+	return err
+}
+
+// GetMeta retrieves a metadata value from meta_kv.
+func (s *Store) GetMeta(ctx context.Context, key string) (string, bool, error) {
+	var val string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta_kv WHERE key = ?`, key).Scan(&val)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
+}
+
+// PutMeta stores or updates a metadata key-value entry in meta_kv.
+func (s *Store) PutMeta(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO meta_kv(key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, value)
 	return err
 }
 

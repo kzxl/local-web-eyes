@@ -35,13 +35,16 @@ var allowedContentTypes = map[string]bool{
 	"application/json":      true,
 	"application/xml":       true,
 	"text/xml":              true,
+	"application/rss+xml":   true,
+	"application/atom+xml":  true,
 }
 
-// FetchOptions controls truncation, pagination, and JS rendering behavior.
+// FetchOptions controls truncation, pagination, section filtering, and JS rendering behavior.
 type FetchOptions struct {
 	MaxChars    int    // 0 uses cfg.Fetch.DefaultMaxChars
 	Offset      int    // Byte offset into extracted markdown for reading long pages
 	RenderJS    string // "auto" (default), "always", "never"
+	Section     string // Optional heading name/keyword to isolate a specific Markdown section
 	BypassCache bool
 }
 
@@ -110,10 +113,11 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string, opts FetchOptions) (
 		maxChars = f.cfg.Fetch.HardMaxChars
 	}
 
-	canonURL := u.String()
+	initialURL := u.String()
+	canonURL := initialURL
 	if !opts.BypassCache && renderMode != "always" && f.store != nil {
 		if cached, ok, cacheErr := f.store.GetPage(ctx, canonURL); cacheErr == nil && ok {
-			return buildFetchResult(cached.URL, cached.Title, cached.Markdown, decodeHeadings(cached.HeadingsJSON), decodeMeta(cached.MetadataJSON), "cache:"+cached.SourceMode, opts.Offset, maxChars, nil), nil
+			return buildFetchResult(cached.URL, cached.Title, cached.Markdown, decodeHeadings(cached.HeadingsJSON), decodeMeta(cached.MetadataJSON), "cache:"+cached.SourceMode, opts.Offset, maxChars, opts.Section, nil), nil
 		}
 	}
 
@@ -183,17 +187,23 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string, opts FetchOptions) (
 	if f.store != nil && strings.TrimSpace(doc.Markdown) != "" {
 		hJSON, _ := json.Marshal(doc.Headings)
 		mJSON, _ := json.Marshal(doc.Metadata)
-		_ = f.store.PutPage(ctx, cache.CachedPage{
+		page := cache.CachedPage{
 			URL:          canonURL,
 			Title:        doc.Title,
 			Markdown:     doc.Markdown,
 			HeadingsJSON: string(hJSON),
 			MetadataJSON: string(mJSON),
 			SourceMode:   sourceMode,
-		}, f.cfg.Fetch.CacheTTL)
+		}
+		_ = f.store.PutPage(ctx, page, f.cfg.Fetch.CacheTTL)
+		if initialURL != canonURL {
+			aliasPage := page
+			aliasPage.URL = initialURL
+			_ = f.store.PutPage(ctx, aliasPage, f.cfg.Fetch.CacheTTL)
+		}
 	}
 
-	return buildFetchResult(canonURL, doc.Title, doc.Markdown, doc.Headings, doc.Metadata, sourceMode, opts.Offset, maxChars, doc.Links), nil
+	return buildFetchResult(canonURL, doc.Title, doc.Markdown, doc.Headings, doc.Metadata, sourceMode, opts.Offset, maxChars, opts.Section, doc.Links), nil
 }
 
 func (f *Fetcher) fetchHTTP(ctx context.Context, rawURL string) (body string, mediaType string, finalURL string, status int, err error) {
@@ -244,8 +254,9 @@ func (f *Fetcher) fetchHTTP(ctx context.Context, rawURL string) (body string, me
 	return string(rawBytes), mediaType, finalURL, status, nil
 }
 
-func buildFetchResult(pageURL, title, markdown string, headings []string, meta map[string]string, mode string, offset, maxChars int, links []string) FetchResult {
-	chunk, nextOffset, truncated := PaginateMarkdown(markdown, offset, maxChars)
+func buildFetchResult(pageURL, title, markdown string, headings []string, meta map[string]string, mode string, offset, maxChars int, section string, links []string) FetchResult {
+	filtered := ExtractSection(markdown, section)
+	chunk, nextOffset, truncated := PaginateMarkdown(filtered, offset, maxChars)
 	return FetchResult{
 		URL:             pageURL,
 		Title:           title,
@@ -253,7 +264,7 @@ func buildFetchResult(pageURL, title, markdown string, headings []string, meta m
 		Headings:        headings,
 		Metadata:        meta,
 		SourceMode:      mode,
-		TotalChars:      len(markdown),
+		TotalChars:      len(filtered),
 		ReturnedChars:   len(chunk),
 		Truncated:       truncated,
 		NextOffset:      nextOffset,

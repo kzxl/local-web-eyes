@@ -69,6 +69,32 @@ func (b *Blocklist) LoadLines(lines []string) (int, int) {
 	return len(nextDomains), len(nextURLs)
 }
 
+// ExportSnapshot serializes active feed domains and URLs to a newline-delimited snapshot.
+func (b *Blocklist) ExportSnapshot() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var sb strings.Builder
+	for d := range b.feedDomains {
+		sb.WriteString(d)
+		sb.WriteByte('\n')
+	}
+	for u := range b.feedURLs {
+		sb.WriteString(u)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// ImportSnapshot restores feed domains and URLs from a previously exported snapshot.
+func (b *Blocklist) ImportSnapshot(raw string) (int, int) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return b.LoadLines(nil)
+	}
+	return b.LoadLines(strings.Split(trimmed, "\n"))
+}
+
 // SyncFromFeeds fetches multiple remote threat-intel feeds and updates the snapshot.
 func (b *Blocklist) SyncFromFeeds(ctx context.Context, client *http.Client, feeds []string) (int, int, error) {
 	if client == nil {

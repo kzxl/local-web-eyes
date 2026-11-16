@@ -1,8 +1,11 @@
 package security
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
 )
 
 func TestSanitizeHTMLStripsHiddenAndInjectionVectors(t *testing.T) {
@@ -48,5 +51,36 @@ func TestSanitizeHTMLStripsHiddenAndInjectionVectors(t *testing.T) {
 
 	if !strings.Contains(cleaned, "Go MCP Server") || !strings.Contains(cleaned, "Visible content works cleanly.") {
 		t.Errorf("sanitized HTML lost expected visible text:\n%s", cleaned)
+	}
+}
+
+func TestSanitizeNodeInPlace(t *testing.T) {
+	raw := `<!doctype html>
+<html>
+<head><script>evil()</script></head>
+<body>
+  <!-- hidden prompt -->
+  <div style="display:none">Secret prompt injection</div>
+  <p>Hello <b>world</b>&#8203;!</p>
+</body>
+</html>`
+	doc, err := html.Parse(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("html.Parse failed: %v", err)
+	}
+	SanitizeNode(doc)
+
+	var buf bytes.Buffer
+	if err := html.Render(&buf, doc); err != nil {
+		t.Fatalf("html.Render failed: %v", err)
+	}
+	rendered := buf.String()
+	for _, forbidden := range []string{"evil()", "hidden prompt", "Secret prompt injection", "\u200b"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Errorf("in-place sanitized DOM still contains %q:\n%s", forbidden, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "<p>Hello <b>world</b>!</p>") {
+		t.Errorf("expected inline spacing preserved around tags, got:\n%s", rendered)
 	}
 }

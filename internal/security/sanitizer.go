@@ -43,15 +43,20 @@ func SanitizeHTML(raw string) (string, error) {
 	return CleanText(buf.String()), nil
 }
 
-// CleanText removes zero-width, bidirectional override, and unsafe control characters.
-func CleanText(s string) string {
+// SanitizeNode prunes active scripts, HTML comments, and hidden DOM elements in-place,
+// and strips invisible/control characters from text nodes without re-serializing HTML.
+func SanitizeNode(doc *html.Node) {
+	if doc == nil {
+		return
+	}
+	pruneNode(doc)
+}
+
+func cleanNodeText(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		if isInvisibleOrDangerousRune(r) {
-			continue
-		}
-		if r == '\r' {
+		if isInvisibleOrDangerousRune(r) || r == '\r' {
 			continue
 		}
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
@@ -59,7 +64,12 @@ func CleanText(s string) string {
 		}
 		b.WriteRune(r)
 	}
-	out := b.String()
+	return b.String()
+}
+
+// CleanText removes zero-width, bidirectional override, and unsafe control characters.
+func CleanText(s string) string {
+	out := cleanNodeText(s)
 	out = multiNewline.ReplaceAllString(out, "\n\n")
 	return strings.TrimSpace(out)
 }
@@ -80,7 +90,11 @@ func pruneNode(n *html.Node) {
 			c = next
 			continue
 		}
-		pruneNode(c)
+		if c.Type == html.TextNode {
+			c.Data = cleanNodeText(c.Data)
+		} else {
+			pruneNode(c)
+		}
 		c = next
 	}
 }

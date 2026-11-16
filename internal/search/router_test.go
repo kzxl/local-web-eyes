@@ -134,3 +134,43 @@ func TestCircuitBreakerTransitions(t *testing.T) {
 		t.Fatal("expected breaker closed after success")
 	}
 }
+
+func TestRouterEscalatesToTier3WhenOnlyWikipediaSucceeds(t *testing.T) {
+	guard := security.NewGuard(security.GuardOptions{})
+	wiki := &stubProvider{
+		name: "wikipedia",
+		tier: 1,
+		results: []Result{
+			{Title: "Go - Wikipedia", URL: "https://en.wikipedia.org/wiki/Go", Snippet: "Encyclopedia entry"},
+		},
+	}
+	ddg := &stubProvider{name: "duckduckgo", tier: 2, err: ErrRateLimited}
+	browserDDG := &stubProvider{
+		name: "browser-ddg",
+		tier: 3,
+		results: []Result{
+			{Title: "Go Official Site", URL: "https://go.dev/", Snippet: "Build simple, secure, scalable systems with Go"},
+		},
+	}
+
+	r := NewRouter(config.Default(), guard, nil, wiki, ddg, browserDDG)
+	resp, err := r.Search(context.Background(), "golang", 5, "")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if browserDDG.called != 1 {
+		t.Fatalf("expected Tier 3 fallback to run when only Wikipedia returned hits, called=%d", browserDDG.called)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected both Wikipedia and Tier 3 results, got %d: %+v", len(resp.Results), resp.Results)
+	}
+}
+
+func TestDetectWikipediaLang(t *testing.T) {
+	if got := detectWikipediaLang("lập trình đồng thời trong Go"); got != "vi" {
+		t.Errorf("expected vi for Vietnamese query, got %q", got)
+	}
+	if got := detectWikipediaLang("Go concurrency patterns"); got != "en" {
+		t.Errorf("expected en for English query, got %q", got)
+	}
+}
