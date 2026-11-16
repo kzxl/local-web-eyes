@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "local-web-eyes-stdio": {
+      "command": "E:\\15. Other\\local-web-eyes\\bin\\local-web-eyes.exe",
+      "args": [
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "LWE_DB_PATH": "E:\\15. Other\\local-web-eyes\\data\\web_eyes.db",
+        "LWE_DEFAULT_MAX_CHARS": "6000"
+      }
+    },
+    "local-web-eyes-http": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:8090/mcp"
+    }
+  }
+}

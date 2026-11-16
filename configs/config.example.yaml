@@ -1,0 +1,57 @@
+server:
+  transport: "stdio"        # "stdio", "http", or "dual"
+  http_addr: "127.0.0.1:8090"
+  http_path: "/mcp"
+  log_level: "info"
+
+search:
+  timeout: "8s"
+  default_limit: 5
+  max_limit: 10
+  max_multi_queries: 5
+  searxng_url: ""           # Optional, e.g. "http://127.0.0.1:8888"
+  enable_wikipedia: true
+  enable_duckduckgo: true
+  enable_mojeek: true
+  enable_browser_fallback: true
+  wikipedia_user_agent: "local-web-eyes/1.0 (local-llm-research-agent)"
+  cache_ttl: "20m"
+
+fetch:
+  timeout: "15s"
+  max_response_bytes: 5242880   # 5 MB
+  max_redirects: 5
+  default_max_chars: 6000       # Tuned for 8GB-16GB Qwen 3.5 9B context budget
+  hard_max_chars: 24000
+  min_extracted_chars_for_browser: 200
+  max_concurrent_fetches: 4
+  cache_ttl: "6h"
+
+crawl:
+  default_depth: 1
+  hard_max_depth: 2
+  default_max_pages: 5
+  hard_max_pages: 10
+  default_max_chars: 12000
+  hard_max_chars: 32000
+
+browser:
+  enabled: true
+  binary_path: ""               # Auto-detects Edge/Chrome when empty
+  max_concurrent_pages: 2
+  page_timeout: "20s"
+  block_media: true
+
+security:
+  blocklist_enabled: true
+  blocklist_refresh_interval: "12h"
+  blocklist_feeds:
+    - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt"
+    - "https://raw.githubusercontent.com/openphish/public_feed/refs/heads/main/feed.txt"
+    - "https://raw.githubusercontent.com/Phishing-Database/Phishing.Database/master/phishing-links-ACTIVE.txt"
+  custom_denylist: []
+  custom_allowlist: []
+  allow_private_ips: false
+
+cache:
+  db_path: "data/web_eyes.db"

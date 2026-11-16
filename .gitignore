@@ -1,0 +1,19 @@
+# Binaries & build artifacts
+bin/
+dist/
+*.exe
+*.test
+*.out
+
+# Local runtime data & SQLite DB
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Environment & local overrides
+.env
+config.local.yaml
+.zero-token/
+.project-rule.md
+

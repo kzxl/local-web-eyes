@@ -1,0 +1,58 @@
+services:
+  local-web-eyes:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    container_name: local-web-eyes
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      LWE_TRANSPORT: "http"
+      LWE_HTTP_ADDR: "0.0.0.0:8090"
+      LWE_HTTP_PATH: "/mcp"
+      LWE_DB_PATH: "/app/data/web_eyes.db"
+      # Set SEARXNG_URL=http://searxng:8080 when starting with `--profile searxng`.
+      SEARXNG_URL: "${SEARXNG_URL:-}"
+    volumes:
+      - web_eyes_data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 512M
+
+  # Optional SearXNG metasearch backend:
+  # docker compose --profile searxng up -d
+  searxng:
+    profiles: ["searxng"]
+    image: searxng/searxng:latest
+    container_name: local-web-eyes-searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: "http://127.0.0.1:8888/"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+volumes:
+  web_eyes_data:

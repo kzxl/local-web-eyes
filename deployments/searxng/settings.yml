@@ -1,0 +1,30 @@
+use_default_settings: true
+
+server:
+  secret_key: "change-me-before-exposing-beyond-localhost"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: false
+  - name: wikipedia
+    engine: wikipedia
+    disabled: false
+  - name: mojeek
+    engine: mojeek
+    disabled: false
+  - name: google
+    engine: google
+    disabled: true
+  - name: bing
+    engine: bing
+    disabled: true
