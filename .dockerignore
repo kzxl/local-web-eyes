@@ -1,0 +1,15 @@
+.git/
+.gitignore
+.project-rule.md
+.zero-token/
+bin/
+dist/
+data/
+*.exe
+*.db
+*.db-wal
+*.db-shm
+*.out
+*.test
+.env
+config.local.yaml
