@@ -28,5 +28,5 @@ if not "%EXIT_CODE%"=="0" (
 
 echo [OK] Built image: %IMAGE_TAG%
 echo Run standalone HTTP MCP server:
-echo   docker run --rm -p 127.0.0.1:8090:8090 --read-only --cap-drop ALL "%IMAGE_TAG%"
+echo   docker run --rm -p 127.0.0.1:8090:8090 -v web_eyes_data:/app/data --tmpfs /tmp:rw,noexec,nosuid,size=128m --read-only --cap-drop ALL "%IMAGE_TAG%"
 exit /b 0
