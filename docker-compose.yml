@@ -1,12 +1,13 @@
 services:
   local-web-eyes:
+    image: local-web-eyes:latest
     build:
-      context: ..
+      context: .
       dockerfile: deployments/Dockerfile
     container_name: local-web-eyes
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8090:8090"
+      - "127.0.0.1:35434:8090"
     environment:
       LWE_TRANSPORT: "http"
       LWE_HTTP_ADDR: "0.0.0.0:8090"
@@ -39,7 +40,7 @@ services:
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./deployments/searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
       SEARXNG_BASE_URL: "http://127.0.0.1:8888/"
     cap_drop:

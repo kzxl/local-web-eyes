@@ -15,20 +15,18 @@ See `deployments/mcp-clients.json` for ready-to-use `stdio` and `streamable-http
 ## 3. Running with Docker Compose
 
 ```powershell
-cd deployments
-
-# Standalone mode (no SearXNG container needed)
-docker compose up -d --build
+# Standalone mode (port 35434 -> container 8090, no SearXNG needed)
+docker compose up -d
 
 # Optional: enable SearXNG container as Tier 1 search backend
 $env:SEARXNG_URL = "http://searxng:8080"
-docker compose --profile searxng up -d --build
+docker compose --profile searxng up -d
 ```
 
 Verify health:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8090/healthz
+Invoke-RestMethod http://127.0.0.1:35434/healthz
 ```
 
 ## 4. Integrating with Ollama (`qwen3.5:9b`)
